@@ -1,0 +1,9 @@
+# Core MCP + pipeline
+mcp>=1.2.0
+numpy>=1.26
+chromadb>=0.5.0
+sentence-transformers>=3.0.0
+uvicorn>=0.30
+
+# Dev/test
+pytest>=8.0
