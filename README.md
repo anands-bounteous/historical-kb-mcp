@@ -71,7 +71,7 @@ Every analysis stores **30+ fields** across these categories:
 
 ```bash
 cd historical-kb-mcp
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
 pip install -e .
 cp .env.example .env    # adjust SI_DATA_DIR if needed
 
@@ -82,6 +82,12 @@ python -m historical_kb_mcp --transport stdio
 python -m historical_kb_mcp --transport http
 # Serves at http://127.0.0.1:8082/mcp
 ```
+
+> This server is one of four processes in the SI Triage POC (this + the
+> Jira/Confluence and Log Intelligence MCPs + the orchestrator). For the full
+> multi-service manual startup sequence, `.env` layout across all four repos,
+> and end-to-end test steps, see **`orchestrator-agent/si-triage-automation/README.md`
+> → "Running the full system manually"**.
 
 ### Seed the KB with the 10 Nexpose defects
 
