@@ -18,6 +18,7 @@ import os
 import re
 import time
 from collections import Counter, defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -50,6 +51,13 @@ def _tokenize(text: str) -> list[str]:
             if sub and sub != raw:
                 tokens.append(sub)
     return tokens
+
+
+def _iso_date(ts: float) -> str:
+    """Unix timestamp -> 'YYYY-MM-DD', or '' if unset (0.0 default)."""
+    if not ts:
+        return ""
+    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
 
 
 class BM25Index:
@@ -410,6 +418,9 @@ class KBEngine:
                 "affected_class": rec.affected_class,
                 "confidence": rec.confidence,
                 "pr_link": rec.pr_link,
+                "pr_status": rec.pr_status,
+                "fix_description": rec.fix_description,
+                "resolution_date": _iso_date(rec.resolved_at),
                 "score": round(score, 6),
             })
 
