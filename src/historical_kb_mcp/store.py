@@ -138,6 +138,7 @@ class VectorStore:
             try:
                 import chromadb
                 client = chromadb.PersistentClient(path=str(self._dir))
+                self._client = client
                 self._impl = client.get_or_create_collection(
                     name="historical_kb",
                     metadata={"hnsw:space": "cosine"},
@@ -258,6 +259,29 @@ class VectorStore:
             return self._impl.count()
         return len(self._np_ids)
 
+    def reset(self) -> None:
+        """Drop all vectors and recreate an empty collection.
+
+        Used to recover from an embedding-dimension change: a Chroma collection
+        fixes its dimension at first insert, so a collection seeded with the
+        512-d hashing fallback cannot accept 768-d sentence-transformer vectors.
+        Callers re-embed from the durable JSON records after resetting.
+        """
+        if self._backend == "chroma":
+            try:
+                self._client.delete_collection("historical_kb")
+            except Exception:
+                pass  # not present yet — recreate below
+            self._impl = self._client.get_or_create_collection(
+                name="historical_kb",
+                metadata={"hnsw:space": "cosine"},
+            )
+        else:
+            self._np_ids = []
+            self._np_meta = []
+            self._np_vecs = np.empty((0, self._embedder.dim), dtype=np.float32)
+            self._save_numpy()
+
 
 # =========================================================================== #
 # KB Engine (orchestrates records + vectors + BM25)
@@ -275,10 +299,64 @@ class KBEngine:
         self._bm25 = BM25Index()
         self._records_dir = self.config.kb_records_dir
         self._rebuild_bm25()
+        self._reconcile_vector_dim()
         logger.info(
             "KBEngine ready: %d records, embedder=%s, vector=%s",
             self._vectors.count(), self._embedder.name, self._vectors._backend,
         )
+
+    def _reconcile_vector_dim(self) -> None:
+        """Self-heal a stale vector collection whose embedding dimension no
+        longer matches the active embedder.
+
+        This happens when the collection was seeded while sentence-transformers
+        was unavailable (512-d hashing fallback) and the real model is now
+        loadable (768-d), or vice versa. Left unhandled, the first search_similar
+        raises "Collection expecting embedding with dimension of N, got M".
+        We detect the mismatch and rebuild the vectors from the durable JSON
+        records at the current dimension.
+        """
+        vs = self._vectors
+        if vs.count() == 0:
+            return  # empty collection has no fixed dimension yet
+        mismatch = False
+        if vs._backend == "numpy":
+            if vs._np_vecs is not None and vs._np_vecs.shape[1] != self._embedder.dim:
+                mismatch = True
+        else:  # chroma — probe with a real query and inspect the error
+            try:
+                vs.query("__dimension_probe__", top_k=1)
+            except Exception as e:  # noqa: BLE001 — narrow on message below
+                if "dimension" in str(e).lower():
+                    mismatch = True
+                else:
+                    raise
+        if mismatch:
+            logger.warning(
+                "KB vector dimension mismatch (embedder dim=%d); rebuilding "
+                "collection from %d JSON record(s)",
+                self._embedder.dim, len(list(self._records_dir.glob("*.json"))),
+            )
+            self._rebuild_vectors_from_records()
+
+    def _rebuild_vectors_from_records(self) -> None:
+        """Drop and re-embed every persisted JSON record into a fresh collection."""
+        self._vectors.reset()
+        n = 0
+        for f in self._records_dir.glob("*.json"):
+            try:
+                rec = AnalysisRecord.from_json(f.read_text())
+            except Exception as e:
+                logger.warning("Skipping corrupt record %s during rebuild: %s", f.name, e)
+                continue
+            self._vectors.upsert(
+                ids=[rec.record_id],
+                texts=[rec.searchable_text()],
+                metadatas=[rec.filter_metadata()],
+            )
+            n += 1
+        logger.info("KB vector rebuild complete: %d record(s) at dim=%d",
+                    n, self._embedder.dim)
 
     def _rebuild_bm25(self) -> None:
         """Rebuild BM25 from persisted JSON records at startup."""
@@ -399,12 +477,21 @@ class KBEngine:
         scored.sort(key=lambda x: x[1], reverse=True)
         scored = scored[:top_k]
 
+        # RRF fusion scores are only meaningful in rank order; their raw magnitude
+        # (max possible = (dense_weight + sparse_weight) / rrf_k, ~0.033 at
+        # defaults) is far below similarity thresholds like MIN_SIMILARITY_FOR_PRECEDENT
+        # that expect a [0,1]-scaled value. Normalize by the theoretical max (best
+        # rank on both dense and sparse, i.e. rank 0 on each) so callers get a
+        # genuine [0,1] similarity score rather than an unusably tiny one.
+        max_possible_score = (cfg.dense_weight + cfg.sparse_weight) / cfg.rrf_k
+
         # Build result summaries
         results = []
         for rid, score in scored:
             rec = self._load_record(rid)
             if rec is None:
                 continue
+            normalized_score = min(1.0, score / max_possible_score) if max_possible_score else 0.0
             results.append({
                 "record_id": rec.record_id,
                 "ticket_id": rec.ticket_id,
@@ -421,7 +508,7 @@ class KBEngine:
                 "pr_status": rec.pr_status,
                 "fix_description": rec.fix_description,
                 "resolution_date": _iso_date(rec.resolved_at),
-                "score": round(score, 6),
+                "score": round(normalized_score, 6),
             })
 
         logger.info(

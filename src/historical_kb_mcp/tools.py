@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from .logging_setup import get_logger
+from .logging_setup import get_logger, with_tool_logging
 from .store import KBEngine
 
 logger = get_logger(__name__)
@@ -22,6 +22,7 @@ def get_engine() -> KBEngine:
     return _engine
 
 
+@with_tool_logging
 def store_analysis(data: dict) -> dict:
     """Store a completed triage analysis in the KB.
 
@@ -38,13 +39,12 @@ def store_analysis(data: dict) -> dict:
     If a record for the same ticket_id already exists, the fields are merged
     (existing values preserved unless overwritten by non-empty new values).
     """
-    logger.info("TOOL store_analysis(ticket_id=%s)", data.get("ticket_id"))
     return get_engine().store_analysis(data)
 
 
+@with_tool_logging
 def get_analysis(ticket_id: str) -> dict:
     """Retrieve the full analysis record for a ticket by its Jira key."""
-    logger.info("TOOL get_analysis(ticket_id=%s)", ticket_id)
     return get_engine().get_analysis(ticket_id)
 
 
@@ -76,6 +76,7 @@ def search_similar(query: str, top_k: int = 10,
     return get_engine().search_similar(query, top_k, filters or None)
 
 
+@with_tool_logging
 def update_analysis(ticket_id: str, updates: dict) -> dict:
     """Update specific fields on an existing analysis (e.g. add PR link after merge).
 
@@ -83,8 +84,6 @@ def update_analysis(ticket_id: str, updates: dict) -> dict:
     the AnalysisRecord schema are updated; record_id, ticket_id, and created_at
     are immutable.
     """
-    logger.info("TOOL update_analysis(ticket_id=%s, fields=%s)",
-                ticket_id, list(updates.keys()))
     return get_engine().update_analysis(ticket_id, updates)
 
 
@@ -100,9 +99,9 @@ def list_analyses(component: str = "", verdict: str = "",
     return get_engine().list_analyses(component, verdict, product, limit)
 
 
+@with_tool_logging
 def delete_analysis(ticket_id: str) -> dict:
     """Remove an analysis record from the KB entirely (vectors, BM25, JSON)."""
-    logger.info("TOOL delete_analysis(ticket_id=%s)", ticket_id)
     return get_engine().delete_analysis(ticket_id)
 
 
