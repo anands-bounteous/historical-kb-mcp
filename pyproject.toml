@@ -4,7 +4,7 @@ version = "1.0.0"
 description = "Historical Search Engineering KB MCP — stores and retrieves past defect triage analyses (Rapid7 SI Triage POC)"
 requires-python = ">=3.11"
 dependencies = [
-    "mcp>=1.2.0",
+    "mcp>=1.2.0,<2.0.0",
     "numpy>=1.26",
     "chromadb>=0.5.0",
     "sentence-transformers>=3.0.0",
